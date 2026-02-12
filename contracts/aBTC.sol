@@ -10,15 +10,14 @@ contract aBTC_PoW is ERC20 {
     uint256 public constant INITIAL_REWARD = 50 * 1e8;
     uint256 public constant HALVING_INTERVAL = 210_000;
     
-    // [FIX 1] Tăng độ khó tối thiểu lên 1000
-    // Để đảm bảo Target < MaxUint, giúp test case "Invalid Nonce" hoạt động đúng.
+    // Ensures Target < MaxUint, enabling the "Invalid Nonce" test case to function correctly.
     uint256 public constant MIN_DIFFICULTY = 1000; 
     uint256 public constant TARGET_TIME = 60; 
 
-    // Config chia tiền
-    uint256 public constant MINER_SHARE = 9000;      // 90%
-    uint256 public constant VALIDATOR_SHARE = 500;   // 5%
-    uint256 public constant PLATFORM_SHARE = 500;    // 5%
+    // Reward Split Configuration (Basis points: 10000 = 100%)
+    uint256 public constant MINER_SHARE = 9000;      // 90% to Agent Owner
+    uint256 public constant VALIDATOR_SHARE = 500;   // 5% to Transaction Sender
+    uint256 public constant PLATFORM_SHARE = 500;    // 5% to Treasury
 
     // --- STATE ---
     IERC721 public immutable agentRegistry;
@@ -48,6 +47,7 @@ contract aBTC_PoW is ERC20 {
         currentRound = 1;
         roundStartBlock = block.number;
         roundDifficulty = MIN_DIFFICULTY;
+        // Use prevrandao for modern EVM, fallback to blockhash for older chains
         roundSeed = block.prevrandao > 0 ? block.prevrandao : uint256(blockhash(block.number - 1));
     }
 
@@ -62,6 +62,7 @@ contract aBTC_PoW is ERC20 {
     }
 
     function getTarget() public view returns (uint256) {
+        // Protect against division by zero
         uint256 diff = roundDifficulty == 0 ? 1 : roundDifficulty;
         return type(uint256).max / diff;
     }
@@ -81,6 +82,7 @@ contract aBTC_PoW is ERC20 {
 
         require(hashVal < target, "Invalid Nonce");
 
+        // Emit event before finalizing round to capture correct round number
         emit MineSuccess(currentRound, agentId, nonce, hashVal);
 
         _finalizeRound(agentId);
@@ -89,6 +91,7 @@ contract aBTC_PoW is ERC20 {
     function _finalizeRound(uint256 winningAgentId) internal {
         uint256 reward = getReward();
         
+        // Cap logic if max supply is exceeded
         if (totalMined + reward > MAX_SUPPLY) {
             reward = MAX_SUPPLY - totalMined;
         }
@@ -115,12 +118,14 @@ contract aBTC_PoW is ERC20 {
         // --- DIFFICULTY ADJUSTMENT ---
         uint256 blocksPassed = block.number - roundStartBlock;
         
+        // Calculate adjustment amount (at least 1 unit)
         uint256 adjustment = roundDifficulty / 20; 
         if (adjustment == 0) adjustment = 1;
 
         if (blocksPassed < TARGET_TIME) {
             roundDifficulty += adjustment;
         } else if (blocksPassed > TARGET_TIME && roundDifficulty > MIN_DIFFICULTY) {
+            // Ensure difficulty doesn't drop below minimum
             if (roundDifficulty > adjustment) {
                 roundDifficulty -= adjustment;
             } else {
@@ -131,6 +136,7 @@ contract aBTC_PoW is ERC20 {
         // --- NEW ROUND ---
         currentRound++;
         roundStartBlock = block.number;
+        // Update seed for the next round
         roundSeed = block.prevrandao > 0 ? block.prevrandao : uint256(blockhash(block.number - 1));
 
         emit RoundStarted(currentRound, roundDifficulty, roundSeed);
